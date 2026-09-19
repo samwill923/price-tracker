@@ -108,7 +108,7 @@ async function scrapeProduct(page, productId) {
 
   try {
     await page.waitForSelector(".price-block.price-success", {
-      timeout: 6000,
+      timeout: 15000,
     });
   } catch {
     const state = await page.evaluate(() => ({
@@ -186,7 +186,10 @@ async function scrapeProduct(page, productId) {
     }
 
     const priceText = priceEl.textContent.trim();
-    const cleanPrice = priceText.replace(/[^\d.]/g, "");
+
+    const normalizedPriceText = priceText.normalize("NFKC");
+    const cleanPrice = normalizedPriceText.replace(/[^\d.]/g, "");
+
     const price = Number(cleanPrice);
 
     if (!Number.isFinite(price)) {
@@ -266,34 +269,48 @@ async function scrapeWithRetry(page, productId, maxAttempts = 5) {
   const attemptLog = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const result = await scrapeProduct(page, productId);
+    try {
+      const result = await scrapeProduct(page, productId);
 
-    const siteReportedAttempts = await page
-      .evaluate(() => {
-        const el = document.querySelector(".price-block");
-        const match = el?.innerText.match(/Loaded in (\d+) attempt/i);
-        return match ? Number(match[1]) : null;
-      })
-      .catch(() => null);
+      const siteReportedAttempts = await page
+        .evaluate(() => {
+          const el = document.querySelector(".price-block");
+          const match = el?.innerText.match(/Loaded in (\d+) attempt/i);
+          return match ? Number(match[1]) : null;
+        })
+        .catch(() => null);
 
-    if (result.status === "success") {
-      attemptLog.push({ attempt, outcome: "success" });
+      if (result.status === "success") {
+        attemptLog.push({ attempt, outcome: "success" });
 
-      return {
-        ...result,
-        attempts: attempt,
-        attemptLog,
-        siteReportedAttempts,
-      };
+        return {
+          ...result,
+          attempts: attempt,
+          attemptLog,
+          siteReportedAttempts,
+        };
+      }
+
+      attemptLog.push({
+        attempt,
+        outcome: attempt < maxAttempts ? "retried" : "failed",
+        reason: result.reason,
+      });
+
+      console.log("SCRAPE FAILURE DETAILS:", result);
+    } catch (error) {
+      attemptLog.push({
+        attempt,
+        outcome: attempt < maxAttempts ? "retried" : "failed",
+        reason: error.name || "unexpected error",
+        error: error.message,
+      });
+
+      console.error(
+        `Attempt ${attempt} threw an error for product ${productId}:`,
+        error.message,
+      );
     }
-
-    attemptLog.push({
-      attempt,
-      outcome: attempt < maxAttempts ? "retried" : "failed",
-      reason: result.reason,
-    });
-
-    console.log("SCRAPE FAILURE DETAILS:", result);
 
     if (attempt < maxAttempts) {
       console.log(
