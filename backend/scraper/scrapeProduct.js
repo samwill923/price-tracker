@@ -105,13 +105,11 @@ async function scrapeProduct(page, productId) {
 
   console.log("Price success state detected!");
 
-  // The site's generated class suffix rotates (pv-k2, pv-m4, etc.)
-  // so we match on the "pv-" prefix instead of an exact class.
   try {
     await page.waitForFunction(
       () => {
         const el = document.querySelector(
-          ".price-block.price-success .price-main output[class*='pv-']",
+          ".price-block.price-success .price-main [class*='pv-']",
         );
         return el && el.textContent.trim().replace(/[^\d]/g, "").length > 0;
       },
@@ -120,6 +118,28 @@ async function scrapeProduct(page, productId) {
   } catch {
     console.log("Price text didn't populate in time, proceeding anyway...");
   }
+
+  // DIAGNOSTIC ONLY — inspect every child inside price-main
+  console.log(
+    "PRICE MAIN CHILDREN:",
+    await page.evaluate(() => {
+      const priceMain = document.querySelector(
+        ".price-block.price-success .price-main",
+      );
+
+      if (!priceMain) return null;
+
+      return [...priceMain.children].map((el) => ({
+        tag: el.tagName,
+        text: el.textContent.trim(),
+        classes: el.className,
+        visible: !!(el.offsetWidth || el.offsetHeight),
+        ariaHidden: el.getAttribute("aria-hidden"),
+        dataPrice: el.getAttribute("data-price"),
+        style: el.getAttribute("style"),
+      }));
+    }),
+  );
 
   const data = await page.evaluate(() => {
     const priceBlock = document.querySelector(".price-block.price-success");
@@ -134,7 +154,7 @@ async function scrapeProduct(page, productId) {
       return { status: "failed", reason: "price-main not found" };
     }
 
-    const priceEl = priceMain.querySelector("output[class*='pv-']");
+    const priceEl = priceMain.querySelector("[class*='pv-']");
 
     if (!priceEl) {
       return {
@@ -162,10 +182,12 @@ async function scrapeProduct(page, productId) {
 
     if (stockEl) {
       stockText = stockEl.textContent.trim();
+
       if (/out of stock/i.test(stockText)) {
         stock = "out_of_stock";
       } else {
         const match = stockText.match(/(\d[\d,]*)\s*left/i);
+
         if (match) {
           stock = parseInt(match[1].replace(/,/g, ""), 10);
         } else {
@@ -176,21 +198,28 @@ async function scrapeProduct(page, productId) {
 
     const mrpEl = priceBlock.querySelector(".price-main span[class*='mr-']");
     let mrp = null;
+
     if (mrpEl) {
       const match = mrpEl.textContent.match(/[\d,]+/);
-      if (match) mrp = Number(match[0].replace(/,/g, ""));
+
+      if (match) {
+        mrp = Number(match[0].replace(/,/g, ""));
+      }
     }
 
     const discountEl = priceBlock.querySelector(
       ".price-main span[class*='bd-']",
     );
+
     const discount = discountEl?.textContent.trim() ?? null;
 
     const sellerEl = priceBlock.querySelector(".sr-k2, [class*='sr-']");
+
     const seller =
       sellerEl?.textContent.replace(/^Sold by\s*/i, "").trim() ?? null;
 
     const deliveryEl = priceBlock.querySelector(".dl-k2, [class*='dl-']");
+
     const delivery = deliveryEl?.textContent.trim() ?? null;
 
     return {
@@ -228,6 +257,7 @@ async function scrapeWithRetry(page, productId, maxAttempts = 5) {
 
     if (result.status === "success") {
       attemptLog.push({ attempt, outcome: "success" });
+
       return {
         ...result,
         attempts: attempt,
@@ -246,6 +276,7 @@ async function scrapeWithRetry(page, productId, maxAttempts = 5) {
       console.log(
         `Attempt ${attempt} failed for product ${productId}, retrying...`,
       );
+
       await new Promise((r) => setTimeout(r, 300));
     }
   }

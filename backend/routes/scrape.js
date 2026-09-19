@@ -6,17 +6,20 @@ const {
   ensureProduct,
   insertPriceHistory,
   insertScrapeLogs,
+  getTrackedProducts,
 } = require("../db");
 
 const router = express.Router();
 
 router.post("/", async (req, res) => {
-  const { productIds } = req.body;
+  let { productIds } = req.body;
 
   if (!Array.isArray(productIds) || productIds.length === 0) {
-    return res
-      .status(400)
-      .json({ error: "productIds must be a non-empty array" });
+    productIds = await getTrackedProducts();
+  }
+
+  if (productIds.length === 0) {
+    return res.status(400).json({ error: "No tracked products found" });
   }
 
   const browser = await puppeteer.launch({

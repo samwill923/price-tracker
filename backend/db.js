@@ -40,5 +40,16 @@ async function insertScrapeLogs(
 
   if (error) console.error("scrape_logs insert failed:", error);
 }
+async function getTrackedProducts() {
+  const { data, error } = await supabase.from("products").select("id");
 
-module.exports = { ensureProduct, insertPriceHistory, insertScrapeLogs };
+  if (error) throw error;
+
+  return data.map((product) => product.id);
+}
+module.exports = {
+  ensureProduct,
+  insertPriceHistory,
+  insertScrapeLogs,
+  getTrackedProducts,
+};

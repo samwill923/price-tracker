@@ -2,7 +2,7 @@ node_modules/
 .env
 bundle.js
 inspect.js
-missing-context.js
+missing-context.txt
 solve.js
 **/node_modules/
 **/.env
