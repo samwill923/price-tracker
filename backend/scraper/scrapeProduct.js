@@ -85,6 +85,27 @@ async function scrapeProduct(page, productId) {
   console.log("Clicking Reveal price...");
   await btn.click();
 
+  await new Promise((r) => setTimeout(r, 300));
+
+  const afterFirstClick = await page.evaluate(() => ({
+    blockClass: document.querySelector(".price-block")?.className,
+  }));
+
+  if (afterFirstClick.blockClass?.includes("price-idle")) {
+    console.log(
+      "First click did not transition, clicking Reveal price again...",
+    );
+    await btn.click();
+  }
+  console.log(
+    "AFTER CLICK IMMEDIATE:",
+    await page.evaluate(() => ({
+      blockClass: document.querySelector(".price-block")?.className,
+      buttonText: document.querySelector('button[aria-label="Reveal price"]')
+        ?.innerText,
+    })),
+  );
+
   try {
     await page.waitForSelector(".price-block.price-success", {
       timeout: 6000,
@@ -271,6 +292,8 @@ async function scrapeWithRetry(page, productId, maxAttempts = 5) {
       outcome: attempt < maxAttempts ? "retried" : "failed",
       reason: result.reason,
     });
+
+    console.log("SCRAPE FAILURE DETAILS:", result);
 
     if (attempt < maxAttempts) {
       console.log(
