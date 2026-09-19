@@ -24,7 +24,11 @@ router.post("/", async (req, res) => {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"], // needed for most hosted environments
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    ], // needed for most hosted environments
   });
 
   const runId = randomUUID();
