@@ -12,6 +12,8 @@ const {
 const router = express.Router();
 
 router.post("/", async (req, res) => {
+  const isCronRequest = req.query.source === "cron";
+
   let { productIds } = req.body;
 
   if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -21,6 +23,19 @@ router.post("/", async (req, res) => {
 
   if (productIds.length === 0) {
     return res.status(400).json({ error: "No tracked products found" });
+  }
+
+  // cron-job.org disconnects after 30s, while a full scrape takes 90-150s.
+  // The scrape itself is unaffected by that disconnect and runs to completion,
+  // so the scheduled caller is acknowledged before the work starts instead of
+  // being left to time out. "accepted" reports only that the run began — the
+  // actual outcome of every attempt is recorded in price_history and
+  // scrape_logs by the unchanged logic below.
+  if (isCronRequest) {
+    res.status(202).json({
+      status: "accepted",
+      message: "Scheduled scrape started",
+    });
   }
 
   const browser = await puppeteer.launch({
@@ -72,26 +87,9 @@ router.post("/", async (req, res) => {
     await browser.close();
   }
 
-  // cron-job.org caps the response body it will accept (~1KB) and marks the
-  // run "Failed (output too large)" beyond that. The detailed payload is about
-  // 295 bytes per product, so scheduled runs ask for a compact acknowledgement
-  // instead. This branch runs only after every scrape, price-history write and
-  // scrape-log write above has already completed — it changes nothing about
-  // what is scraped or stored, only what is echoed back to the caller.
-  if (req.query.source === "cron") {
-    const failureCount = results.filter(
-      (result) => result.status !== "success",
-    ).length;
-
-    return res.json(
-      failureCount === 0
-        ? { status: "success", message: "Scheduled scrape completed" }
-        : {
-            status: "completed_with_errors",
-            message: "Scheduled scrape completed with some failures",
-          },
-    );
-  }
+  // Scheduled runs were already acknowledged before the scrape began, so there
+  // is nothing further to send them.
+  if (isCronRequest) return;
 
   res.json({ runId, results });
 });
