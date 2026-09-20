@@ -6,3 +6,7 @@ missing-context.txt
 solve.js
 **/node_modules/
 **/.env
+dist/
+**/dist/
+.env.local
+**/.env.local

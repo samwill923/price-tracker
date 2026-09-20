@@ -163,6 +163,29 @@ async function scrapeProduct(page, productId) {
   );
 
   const data = await page.evaluate(() => {
+    // The store deliberately randomises how it renders money, cycling through
+    // plain (Rs.6,093), space-grouped (6 093), European (6.093,00),
+    // lakh (Rs. 6,093.00), full-width digits, zero-width/NBSP padded, and a
+    // "/- (incl. of all taxes)" suffix. Parsing has to survive all of them, so
+    // separators are only ever treated as decimals when they are the ",00"/
+    // ".00" tail the formatter appends — every real price is a whole rupee.
+    function parseMoney(raw) {
+      if (raw == null) return null;
+
+      let text = String(raw).normalize("NFKC");
+      text = text.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, "");
+
+      const match = text.match(/\d[\d.,]*/);
+      if (!match) return null;
+
+      let digits = match[0].replace(/[.,]+$/, "");
+      digits = digits.replace(/[.,]00$/, "");
+      digits = digits.replace(/[.,]/g, "");
+
+      const value = Number(digits);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
     const priceBlock = document.querySelector(".price-block.price-success");
 
     if (!priceBlock) {
@@ -187,12 +210,12 @@ async function scrapeProduct(page, productId) {
 
     const priceText = priceEl.textContent.trim();
 
-    const normalizedPriceText = priceText.normalize("NFKC");
-    const cleanPrice = normalizedPriceText.replace(/[^\d.]/g, "");
+    const price = parseMoney(priceText);
 
-    const price = Number(cleanPrice);
-
-    if (!Number.isFinite(price)) {
+    // A missing or zero price means the node was read before it rendered, not
+    // that the product is free — treat it as a parse failure so the retry runs
+    // and the attempt is logged honestly instead of storing a bogus 0.
+    if (!Number.isFinite(price) || price <= 0) {
       return {
         status: "failed",
         reason: "could not parse rendered selling price",
@@ -224,11 +247,8 @@ async function scrapeProduct(page, productId) {
     let mrp = null;
 
     if (mrpEl) {
-      const match = mrpEl.textContent.match(/[\d,]+/);
-
-      if (match) {
-        mrp = Number(match[0].replace(/,/g, ""));
-      }
+      // The MRP is rendered by the same randomising formatter as the price.
+      mrp = parseMoney(mrpEl.textContent);
     }
 
     const discountEl = priceBlock.querySelector(

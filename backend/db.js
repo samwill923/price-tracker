@@ -1,9 +1,12 @@
 const supabase = require("./supabaseClient");
 
-async function ensureProduct(productId) {
-  await supabase
-    .from("products")
-    .upsert({ id: productId }, { onConflict: "id" });
+async function ensureProduct(productId, name) {
+  const row = { id: productId };
+  // Only overwrite the stored name when we actually have one, so a plain
+  // scrape run never wipes the name captured at track time.
+  if (name) row.name = name;
+
+  await supabase.from("products").upsert(row, { onConflict: "id" });
 }
 
 async function insertPriceHistory(result) {
@@ -41,15 +44,68 @@ async function insertScrapeLogs(
   if (error) console.error("scrape_logs insert failed:", error);
 }
 async function getTrackedProducts() {
-  const { data, error } = await supabase.from("products").select("id");
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, name, created_at")
+    .order("created_at", { ascending: true });
 
   if (error) throw error;
 
-  return data.map((product) => product.id);
+  return data || [];
+}
+async function getPriceHistory(productId) {
+  const { data, error } = await supabase
+    .from("price_history")
+    .select("*")
+    .eq("product_id", productId)
+    .order("scraped_at", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+async function getScrapeLogs(productId) {
+  const { data, error } = await supabase
+    .from("scrape_logs")
+    .select("*")
+    .eq("product_id", productId)
+    .order("logged_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+async function getLatestPrices(productIds) {
+  if (!productIds.length) return {};
+
+  const { data, error } = await supabase
+    .from("price_history")
+    .select("*")
+    .in("product_id", productIds)
+    .order("scraped_at", { ascending: false });
+
+  if (error) throw error;
+
+  const latest = {};
+  for (const row of data || []) {
+    // Rows arrive newest-first, so the first one seen per product wins.
+    if (!latest[row.product_id]) latest[row.product_id] = row;
+  }
+  return latest;
+}
+
+async function deleteTrackedProduct(productId) {
+  const { error } = await supabase
+    .from("products")
+    .delete()
+    .eq("id", productId);
+  if (error) throw error;
 }
 module.exports = {
   ensureProduct,
   insertPriceHistory,
   insertScrapeLogs,
   getTrackedProducts,
+  getPriceHistory,
+  getScrapeLogs,
+  getLatestPrices,
+  deleteTrackedProduct,
 };

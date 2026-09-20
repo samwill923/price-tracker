@@ -15,7 +15,8 @@ router.post("/", async (req, res) => {
   let { productIds } = req.body;
 
   if (!Array.isArray(productIds) || productIds.length === 0) {
-    productIds = await getTrackedProducts();
+    // getTrackedProducts returns { id, name } rows; the scrape loop wants ids.
+    productIds = (await getTrackedProducts()).map((product) => product.id);
   }
 
   if (productIds.length === 0) {
