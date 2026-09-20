@@ -72,6 +72,27 @@ router.post("/", async (req, res) => {
     await browser.close();
   }
 
+  // cron-job.org caps the response body it will accept (~1KB) and marks the
+  // run "Failed (output too large)" beyond that. The detailed payload is about
+  // 295 bytes per product, so scheduled runs ask for a compact acknowledgement
+  // instead. This branch runs only after every scrape, price-history write and
+  // scrape-log write above has already completed — it changes nothing about
+  // what is scraped or stored, only what is echoed back to the caller.
+  if (req.query.source === "cron") {
+    const failureCount = results.filter(
+      (result) => result.status !== "success",
+    ).length;
+
+    return res.json(
+      failureCount === 0
+        ? { status: "success", message: "Scheduled scrape completed" }
+        : {
+            status: "completed_with_errors",
+            message: "Scheduled scrape completed with some failures",
+          },
+    );
+  }
+
   res.json({ runId, results });
 });
 
