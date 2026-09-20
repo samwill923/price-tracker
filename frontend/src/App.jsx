@@ -1,232 +1,86 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  ArrowDown,
-  CheckCircle2,
-  Clock3,
-  Eye,
-  Loader2,
-  Package,
-  RefreshCw,
-  Search,
-  ShoppingBag,
-  Store,
-  Trash2,
-  Truck,
-  X,
-  AlertCircle,
-  History,
-  FileText,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, Loader2, RefreshCw, Search, ShoppingBag, X } from "lucide-react";
+import { api, unwrapArray } from "./lib/api";
+import { formatDate, formatRelative, readStock } from "./lib/format";
+import Sidebar, { VIEWS } from "./components/Sidebar";
+import SummaryCards from "./components/SummaryCards";
+import SearchPanel from "./components/SearchPanel";
+import ProductCard from "./components/ProductCard";
+import ProductDetails from "./components/ProductDetails";
+import LogList from "./components/LogList";
+import Toasts from "./components/Toasts";
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL || "https://price-tracker-3bxr.onrender.com"
-).replace(/\/$/, "");
-
-function formatPrice(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
-  return `₹${number.toLocaleString("en-IN")}`;
-}
-
-function formatDate(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function getDiscountNumber(discount) {
-  const match = String(discount ?? "").match(/[\d.]+/);
-  return match ? Number(match[0]) : null;
-}
-
-function unwrapArray(data, keys = []) {
-  if (Array.isArray(data)) return data;
-  for (const key of keys) if (Array.isArray(data?.[key])) return data[key];
-  return [];
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data?.error || data?.message || `Request failed (${response.status})`);
-  }
-  return data;
-}
-
-function stockAvailable(product) {
-  const raw = String(product?.stock ?? "");
-  // The scraper reports either a unit count or the strings in_stock /
-  // out_of_stock, so both forms have to be handled explicitly.
-  if (raw === "out_of_stock") return false;
-  if (raw === "in_stock") return true;
-
-  const numeric = Number(raw);
-  if (raw !== "" && Number.isFinite(numeric)) return numeric > 0;
-
-  const text = String(product?.stockText || "");
-  if (/out of stock/i.test(text)) return false;
-  return /in stock|\d+\s*left|available/i.test(text);
-}
-
-function ProductIcon() {
-  return (
-    <div className="product-icon">
-      <ShoppingBag size={20} strokeWidth={2.1} />
-    </div>
-  );
-}
-
-function SearchResult({ product, onTrack, tracking }) {
-  return (
-    <article className="search-result">
-      <ProductIcon />
-      <div className="search-result-copy">
-        <strong>{product.name || "Unnamed product"}</strong>
-        <span>
-          {product.brand || "Unknown brand"} · {product.sku || `Product #${product.productId}`}
-        </span>
-        {product.category && <small>{product.category}</small>}
-      </div>
-      <button className="track-button" onClick={() => onTrack(product)} disabled={tracking}>
-        {tracking ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-        {tracking ? "Tracking..." : "Track product"}
-      </button>
-    </article>
-  );
-}
-
-function TrackedCard({ product, latest, onDetails, onUntrack, untracking }) {
-  const current = latest || product;
-  const discountNumber = getDiscountNumber(current?.discount);
-  const available = stockAvailable(current);
-
-  return (
-    <article className="product-card">
-      <div className="card-top">
-        <ProductIcon />
-        <div className="product-id">
-          <span>{product.brand || "TRACKED PRODUCT"}</span>
-          <strong>{product.name || `#${product.productId}`}</strong>
-        </div>
-        <span className={`status ${available ? "success" : "warning"}`}>
-          <span className="status-dot" />
-          {available ? "In stock" : "Check stock"}
-        </span>
-      </div>
-
-      <div className="product-meta">
-        <span>{product.sku || `Product #${product.productId}`}</span>
-        {product.category && <span>{product.category}</span>}
-      </div>
-
-      <div className="price-area">
-        <span className="label">CURRENT PRICE</span>
-        <div className="price-row">
-          <h2>{formatPrice(current?.price)}</h2>
-          {discountNumber !== null && (
-            <span className="discount"><ArrowDown size={13} />{discountNumber}% OFF</span>
-          )}
-        </div>
-        <div className="mrp">MRP <span>{formatPrice(current?.mrp)}</span></div>
-      </div>
-
-      <div className="details">
-        <div className="detail"><Package size={17} /><div><span>Stock</span><strong>{current?.stockText || current?.stock || "Awaiting scrape"}</strong></div></div>
-        <div className="detail"><Store size={17} /><div><span>Seller</span><strong>{current?.seller || "—"}</strong></div></div>
-        <div className="detail"><Truck size={17} /><div><span>Delivery</span><strong>{current?.delivery || "—"}</strong></div></div>
-      </div>
-
-      <div className="card-actions">
-        <button className="secondary-button" onClick={() => onDetails(product)}><Eye size={16} /> Details</button>
-        <button className="danger-button" onClick={() => onUntrack(product)} disabled={untracking}><Trash2 size={16} /> {untracking ? "Stopping..." : "Stop tracking"}</button>
-      </div>
-    </article>
-  );
-}
-
-function DetailsPanel({ product, latest, history, logs, loading, onClose, onRefresh }) {
-  const prices = history
-    .map((row) => Number(row.price))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  const minPrice = prices.length ? Math.min(...prices) : null;
-  const maxPrice = prices.length ? Math.max(...prices) : null;
-
-  return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <section className="details-panel">
-        <header className="panel-header">
-          <div>
-            <p className="eyebrow">PRODUCT DETAILS</p>
-            <h2>{product.name || `Product #${product.productId}`}</h2>
-            <p>{product.brand || ""} {product.sku ? `· ${product.sku}` : ""}</p>
-          </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button>
-        </header>
-
-        <div className="detail-summary">
-          <div><span>Current price</span><strong>{formatPrice(latest?.price)}</strong></div>
-          <div><span>Lowest recorded</span><strong>{formatPrice(minPrice)}</strong></div>
-          <div><span>Highest recorded</span><strong>{formatPrice(maxPrice)}</strong></div>
-          <div><span>History points</span><strong>{history.length}</strong></div>
-        </div>
-
-        <div className="panel-toolbar">
-          <div className="panel-tabs"><span className="active"><History size={15} /> Price history</span><span><FileText size={15} /> Scrape logs</span></div>
-          <button className="secondary-button" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} Refresh</button>
-        </div>
-
-        <div className="history-section">
-          <div className="subheading"><div><h3>Price & stock history</h3><p>Every successful scrape saved for this product.</p></div></div>
-          {loading ? <div className="panel-loading"><Loader2 className="spin" /> Loading details...</div> : history.length ? (
-            <div className="table-wrap"><table><thead><tr><th>Timestamp</th><th>Price</th><th>MRP</th><th>Discount</th><th>Stock</th></tr></thead><tbody>
-              {history.map((row, index) => <tr key={`${row.id || row.scraped_at || index}`}><td>{formatDate(row.scraped_at || row.created_at || row.timestamp)}</td><td className="table-price">{formatPrice(row.price)}</td><td>{formatPrice(row.mrp)}</td><td>{row.discount || "—"}</td><td>{row.stock_text || row.stockText || row.stock || "—"}</td></tr>)}
-            </tbody></table></div>
-          ) : <div className="empty-panel">No successful price history yet. Run a refresh to create the first data point.</div>}
-        </div>
-
-        <div className="logs-section">
-          <div className="subheading"><div><h3>Scrape attempts</h3><p>Failures and retries remain visible instead of being hidden.</p></div></div>
-          {logs.length ? <div className="logs-list">{logs.map((log, index) => {
-            const outcome = String(log.outcome || log.status || "unknown").toLowerCase();
-            const good = outcome === "success";
-            const warn = outcome === "retried";
-            return <div className="log-row" key={`${log.id || log.logged_at || index}`}><div className={`log-dot ${good ? "success" : warn ? "retry" : "failure"}`} /><div className="log-main"><strong>Attempt {log.attempt_number ?? index + 1} · {log.outcome || log.status || "unknown"}</strong><span>{log.reason || log.message || "No additional reason recorded"}</span></div><div className="log-time">{formatDate(log.logged_at || log.created_at || log.timestamp)}</div></div>;
-          })}</div> : <div className="empty-panel">No scrape attempts recorded yet.</div>}
-        </div>
-      </section>
-    </div>
-  );
-}
+// The feed merges every attempt from every tracked product, which grows without
+// bound; the rest stays reachable per product under Logs.
+const ACTIVITY_LIMIT = 150;
 
 function App() {
+  const [view, setView] = useState("dashboard");
   const [catalog, setCatalog] = useState([]);
   const [tracked, setTracked] = useState([]);
   const [latest, setLatest] = useState({});
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [connection, setConnection] = useState("connecting");
-  const [lastUpdated, setLastUpdated] = useState(null);
   const [trackingId, setTrackingId] = useState(null);
   const [untrackingId, setUntrackingId] = useState(null);
+  const [scrapingId, setScrapingId] = useState(null);
+  const [cardNotes, setCardNotes] = useState({});
   const [detailsProduct, setDetailsProduct] = useState(null);
+  const [detailsTab, setDetailsTab] = useState("history");
   const [details, setDetails] = useState({ history: [], logs: [] });
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [activity, setActivity] = useState({ logs: [], loading: false, loaded: false });
+  const [toasts, setToasts] = useState([]);
+
+  const toastTimers = useRef(new Map());
+
+  const dismissToast = useCallback((id) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+    const timer = toastTimers.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      toastTimers.current.delete(id);
+    }
+  }, []);
+
+  const pushToast = useCallback(
+    (text, tone = "good") => {
+      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      setToasts((current) => [...current.slice(-2), { id, text, tone }]);
+      toastTimers.current.set(
+        id,
+        setTimeout(() => dismissToast(id), tone === "bad" ? 7000 : 4000)
+      );
+    },
+    [dismissToast]
+  );
+
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  }, []);
+
+  // A card-local message, so a single product's outcome never has to be
+  // announced with a page-level banner.
+  const setCardNote = useCallback((productId, note) => {
+    setCardNotes((current) => ({ ...current, [String(productId)]: note }));
+    if (note) {
+      setTimeout(() => {
+        setCardNotes((current) => {
+          if (current[String(productId)] !== note) return current;
+          const next = { ...current };
+          delete next[String(productId)];
+          return next;
+        });
+      }, 8000);
+    }
+  }, []);
 
   const loadTracked = useCallback(async () => {
     const data = await api("/api/products/tracked");
@@ -256,86 +110,91 @@ function App() {
     }
   }, [loadCatalog, loadTracked]);
 
-  useEffect(() => { loadInitial(); }, [loadInitial]);
+  useEffect(() => {
+    loadInitial();
+  }, [loadInitial]);
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (!trimmed) { setSearchResults([]); setSearching(false); return; }
+    if (!trimmed) {
+      setSearchResults([]);
+      setSearching(false);
+      setSearchError("");
+      return;
+    }
     const timer = setTimeout(async () => {
       setSearching(true);
+      setSearchError("");
       try {
         const data = await api(`/api/products/search?q=${encodeURIComponent(trimmed)}`);
         setSearchResults(unwrapArray(data, ["products", "results"]));
       } catch (err) {
-        setError(err.message || "Search failed.");
-      } finally { setSearching(false); }
+        setSearchError(err.message || "Search failed.");
+      } finally {
+        setSearching(false);
+      }
     }, 300);
     return () => clearTimeout(timer);
   }, [query]);
 
-  const catalogMap = useMemo(() => new Map(catalog.map((p) => [String(p.productId), p])), [catalog]);
+  const trackedIds = useMemo(
+    () => new Set(tracked.map((product) => String(product.productId))),
+    [tracked]
+  );
 
   const trackProduct = async (product) => {
     setTrackingId(product.productId);
-    setError("");
     try {
-      await api("/api/products/track", { method: "POST", body: JSON.stringify({ productId: product.productId }) });
+      await api("/api/products/track", {
+        method: "POST",
+        body: JSON.stringify({ productId: product.productId }),
+      });
       await loadTracked();
-      setQuery("");
-      setSearchResults([]);
-    } catch (err) { setError(err.message || "Could not track this product."); }
-    finally { setTrackingId(null); }
+      pushToast(`Now tracking ${product.name || `#${product.productId}`}`);
+    } catch (err) {
+      pushToast(err.message || "Could not track this product.", "bad");
+    } finally {
+      setTrackingId(null);
+    }
   };
 
   const untrackProduct = async (product) => {
     setUntrackingId(product.productId);
-    setError("");
     try {
       await api(`/api/products/track/${product.productId}`, { method: "DELETE" });
       await loadTracked();
       if (detailsProduct?.productId === product.productId) setDetailsProduct(null);
-    } catch (err) { setError(err.message || "Could not stop tracking this product."); }
-    finally { setUntrackingId(null); }
-  };
-
-  const refreshPrices = async () => {
-    setRefreshing(true);
-    setError("");
-    try {
-      const data = await api("/api/scrape", { method: "POST", body: JSON.stringify({}) });
-      const results = Array.isArray(data?.results) ? data.results : unwrapArray(data, ["data"]);
-
-      // Only successful scrapes overlay the card. A failed attempt must not
-      // erase the last known price — it is reported below and recorded in the
-      // product's scrape logs instead.
-      const next = {};
-      const failed = [];
-      results.forEach((result) => {
-        if (result?.productId == null) return;
-        if (result.status === "success") next[String(result.productId)] = result;
-        else failed.push(result);
-      });
-
-      setLatest(next);
-      setLastUpdated(new Date());
-      await loadTracked();
-      setConnection("connected");
-
-      if (failed.length) {
-        setError(
-          `${failed.length} of ${results.length} scrapes failed (${failed
-            .map((f) => `#${f.productId}: ${f.reason || "unknown reason"}`)
-            .join(", ")}). Every attempt is recorded under Details -> Scrape attempts.`
-        );
-      }
+      pushToast(`Stopped tracking ${product.name || `#${product.productId}`}`);
     } catch (err) {
-      setError(err.message || "Could not refresh prices. Failed attempts should be visible in product logs.");
-      setConnection("error");
-    } finally { setRefreshing(false); }
+      pushToast(err.message || "Could not stop tracking this product.", "bad");
+    } finally {
+      setUntrackingId(null);
+    }
   };
 
-  const openDetails = async (product) => {
+  // Only successful scrapes overlay the card. A failed attempt must not erase
+  // the last known price - it is reported on the card itself and recorded in
+  // the product's scrape logs instead.
+  const applyResults = (results) => {
+    const succeeded = [];
+    const failed = [];
+    const overlay = {};
+    results.forEach((result) => {
+      if (result?.productId == null) return;
+      if (result.status === "success") {
+        overlay[String(result.productId)] = result;
+        succeeded.push(result);
+      } else {
+        failed.push(result);
+      }
+    });
+    if (Object.keys(overlay).length) setLatest((current) => ({ ...current, ...overlay }));
+    return { succeeded, failed };
+  };
+
+  const openDetails = async (product, tab = "history") => {
     setDetailsProduct(product);
+    setDetailsTab(tab);
     setDetailsLoading(true);
     try {
       const [historyData, logsData] = await Promise.all([
@@ -346,56 +205,322 @@ function App() {
         history: unwrapArray(historyData, ["history", "prices", "data"]),
         logs: unwrapArray(logsData, ["logs", "attempts", "data"]),
       });
-    } catch (err) { setError(err.message || "Could not load product details."); }
-    finally { setDetailsLoading(false); }
+    } catch (err) {
+      pushToast(err.message || "Could not load product details.", "bad");
+    } finally {
+      setDetailsLoading(false);
+    }
   };
 
+  const scrapeProduct = async (product) => {
+    setScrapingId(product.productId);
+    setCardNote(product.productId, null);
+    try {
+      const data = await api("/api/scrape", {
+        method: "POST",
+        body: JSON.stringify({ productIds: [product.productId] }),
+      });
+      const results = Array.isArray(data?.results) ? data.results : unwrapArray(data, ["data"]);
+      const { failed } = applyResults(results);
+      await loadTracked();
+      setConnection("connected");
+
+      if (failed.length) {
+        setCardNote(product.productId, {
+          tone: "bad",
+          text: `Scrape failed: ${failed[0].reason || "unknown reason"}. Every attempt is recorded under Logs.`,
+        });
+      } else {
+        setCardNote(product.productId, { tone: "good", text: "Price updated just now." });
+      }
+      if (detailsProduct?.productId === product.productId) openDetails(product, detailsTab);
+    } catch (err) {
+      setCardNote(product.productId, {
+        tone: "bad",
+        text: err.message || "Could not reach the scraper. Failed attempts stay visible under Logs.",
+      });
+    } finally {
+      setScrapingId(null);
+    }
+  };
+
+  const refreshPrices = async () => {
+    setRefreshing(true);
+    setError("");
+    try {
+      const data = await api("/api/scrape", { method: "POST", body: JSON.stringify({}) });
+      const results = Array.isArray(data?.results) ? data.results : unwrapArray(data, ["data"]);
+      const { succeeded, failed } = applyResults(results);
+      await loadTracked();
+      setConnection("connected");
+
+      failed.forEach((result) =>
+        setCardNote(result.productId, {
+          tone: "bad",
+          text: `Scrape failed: ${result.reason || "unknown reason"}. See Logs for every attempt.`,
+        })
+      );
+
+      if (failed.length) {
+        pushToast(
+          `${succeeded.length} of ${results.length} products updated - ${failed.length} failed`,
+          "bad"
+        );
+      } else if (succeeded.length) {
+        pushToast(`${succeeded.length} ${succeeded.length === 1 ? "product" : "products"} updated`);
+      }
+    } catch (err) {
+      setError(
+        err.message || "Could not refresh prices. Failed attempts should be visible in product logs."
+      );
+      setConnection("error");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Logs are only exposed per product, so the activity feed reads the same
+  // endpoint once per tracked product and merges the rows by time.
+  const loadActivity = useCallback(
+    async (products) => {
+      if (!products.length) {
+        setActivity({ logs: [], loading: false, loaded: true });
+        return;
+      }
+      setActivity((current) => ({ ...current, loading: true }));
+      const responses = await Promise.all(
+        products.map(async (product) => {
+          const data = await api(`/api/products/${product.productId}/logs`).catch(() => null);
+          if (!data) return [];
+          return unwrapArray(data, ["logs", "attempts", "data"]).map((log) => ({
+            ...log,
+            productId: product.productId,
+            productName: product.name || `#${product.productId}`,
+          }));
+        })
+      );
+      const merged = responses
+        .flat()
+        .sort(
+          (a, b) =>
+            new Date(b.logged_at || b.created_at || 0) - new Date(a.logged_at || a.created_at || 0)
+        );
+      setActivity({ logs: merged, loading: false, loaded: true });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (view === "activity" && !activity.loaded && !activity.loading) loadActivity(tracked);
+  }, [view, activity.loaded, activity.loading, tracked, loadActivity]);
+
   const stats = useMemo(() => {
-    const available = tracked.filter((p) => stockAvailable(latest[String(p.productId)] || p)).length;
-    const prices = tracked.map((p) => Number((latest[String(p.productId)] || p)?.price)).filter(Number.isFinite);
-    return { count: tracked.length, available, average: prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : null };
+    let inStock = 0;
+    let outOfStock = 0;
+    let unknown = 0;
+    let lastSync = null;
+
+    tracked.forEach((product) => {
+      const current = latest[String(product.productId)] || product;
+      const { state } = readStock(current);
+      if (state === "in") inStock += 1;
+      else if (state === "out") outOfStock += 1;
+      else unknown += 1;
+
+      // lastScrapedAt is what the tracked endpoint already reports; a fresh
+      // scrape result in this session carries scraped_at instead.
+      const scrapedAt = current?.lastScrapedAt || current?.scraped_at || product?.lastScrapedAt;
+      const time = scrapedAt ? new Date(scrapedAt).getTime() : NaN;
+      if (Number.isFinite(time) && (lastSync === null || time > lastSync)) lastSync = time;
+    });
+
+    return {
+      total: tracked.length,
+      inStock,
+      outOfStock,
+      unknown,
+      lastSyncRelative: lastSync ? formatRelative(new Date(lastSync).toISOString()) : null,
+      lastSyncAbsolute: lastSync ? formatDate(new Date(lastSync).toISOString()) : null,
+    };
   }, [tracked, latest]);
 
-  const resultsToShow = searchResults.length ? searchResults : query.trim() ? [] : [];
-  const updatedText = lastUpdated ? lastUpdated.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
+  const activeView = VIEWS.find((item) => item.id === view) || VIEWS[0];
+
+  const productGrid = loading ? (
+    <div className="product-grid">
+      {[1, 2, 3].map((index) => (
+        <div className="skeleton-card" key={index}>
+          <div className="skeleton skeleton-title" />
+          <div className="skeleton skeleton-price" />
+          <div className="skeleton skeleton-line" />
+          <div className="skeleton skeleton-line short" />
+        </div>
+      ))}
+    </div>
+  ) : tracked.length ? (
+    <div className="product-grid">
+      {tracked.map((product) => (
+        <ProductCard
+          key={product.productId}
+          product={product}
+          latest={latest[String(product.productId)]}
+          onHistory={(item) => openDetails(item, "history")}
+          onLogs={(item) => openDetails(item, "logs")}
+          onScrape={scrapeProduct}
+          onUntrack={untrackProduct}
+          scraping={scrapingId === product.productId}
+          untracking={untrackingId === product.productId}
+          note={cardNotes[String(product.productId)]}
+        />
+      ))}
+    </div>
+  ) : (
+    <div className="empty-state">
+      <ShoppingBag size={26} />
+      <h3>No products are being tracked</h3>
+      <p>
+        Find a product in the INE mock store and start tracking it to collect price and stock
+        history.
+      </p>
+      <button className="btn btn-primary" onClick={() => setView("search")}>
+        <Search size={15} /> Find products
+      </button>
+    </div>
+  );
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand"><div className="brand-mark"><Activity size={21} /></div><div><h1>Price Tracker</h1><p>INE product monitoring</p></div></div>
-        <button className="refresh-button" onClick={refreshPrices} disabled={refreshing || tracked.length === 0}><RefreshCw className={refreshing ? "spin" : ""} size={17} />{refreshing ? "Scraping..." : "Refresh Prices"}</button>
-      </header>
+    <div className="app">
+      <Sidebar view={view} onView={setView} trackedCount={tracked.length} connection={connection} />
 
-      <main className="main">
-        <section className="hero">
-          <div><p className="eyebrow">PRODUCT PRICE MONITORING</p><h2>Track the products that matter.</h2><p className="hero-copy">Search INE's mock store, start tracking a product, and inspect its price history and scrape reliability over time.</p></div>
-          <div className={`live-pill ${connection}`}><span />{connection === "connected" ? "Backend connected" : connection === "error" ? "Backend unavailable" : "Connecting..."}</div>
-        </section>
+      <div className="app-main">
+        <header className="topbar">
+          <div className="topbar-copy">
+            <h1>{activeView.label}</h1>
+            <p>
+              {view === "dashboard"
+                ? "Price and stock across every product you track."
+                : view === "search"
+                  ? "Search the mock store and start tracking products."
+                  : "Every scrape attempt recorded across your tracked products."}
+            </p>
+          </div>
+          {view === "dashboard" && (
+            <button
+              className="btn btn-primary"
+              onClick={refreshPrices}
+              disabled={refreshing || tracked.length === 0}
+            >
+              <RefreshCw size={15} className={refreshing ? "spin" : ""} />
+              {refreshing ? "Scraping..." : "Scrape all"}
+            </button>
+          )}
+          {view === "activity" && (
+            <button
+              className="btn btn-ghost"
+              onClick={() => loadActivity(tracked)}
+              disabled={activity.loading}
+            >
+              {activity.loading ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
+              Reload
+            </button>
+          )}
+        </header>
 
-        <section className="search-section">
-          <div className="section-heading"><div><h3>Find a product</h3><p>Search by partial or full product name.</p></div></div>
-          <div className="search-large"><Search size={19} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. wireless headphones" aria-label="Search products by name" />{query && <button onClick={() => setQuery("")} aria-label="Clear search"><X size={17} /></button>}</div>
-          {query.trim() && <div className="search-results">{searching ? <div className="search-status"><Loader2 className="spin" size={18} /> Searching the product catalog...</div> : resultsToShow.length ? resultsToShow.map((p) => <SearchResult key={p.productId} product={p} onTrack={trackProduct} tracking={trackingId === p.productId} />) : <div className="search-status"><Search size={18} /> No matching products found.</div>}</div>}
-        </section>
+        <main className="content">
+          {error && (
+            <div className="alert">
+              <AlertCircle size={18} />
+              <div>
+                <strong>Something needs attention</strong>
+                <p>{error}</p>
+              </div>
+              <button onClick={() => setError("")} aria-label="Dismiss">
+                <X size={16} />
+              </button>
+            </div>
+          )}
 
-        {error && <div className="error-box"><AlertCircle size={19} /><div><strong>Something needs attention</strong><p>{error}</p></div><button onClick={() => setError("")}><X size={17} /></button></div>}
+          {view === "dashboard" && (
+            <>
+              <SummaryCards stats={stats} />
+              <section className="section">
+                <div className="section-head">
+                  <div>
+                    <h2>Tracked products</h2>
+                    <p>
+                      {tracked.length
+                        ? `${tracked.length} product${tracked.length === 1 ? "" : "s"} being monitored`
+                        : "Nothing tracked yet"}
+                    </p>
+                  </div>
+                </div>
+                {productGrid}
+              </section>
+            </>
+          )}
 
-        <section className="stats-grid">
-          <div className="stat-card"><div className="stat-icon"><ShoppingBag size={18} /></div><div><span>Tracked products</span><strong>{stats.count}</strong></div></div>
-          <div className="stat-card"><div className="stat-icon"><CheckCircle2 size={18} /></div><div><span>Currently available</span><strong>{stats.available}</strong></div></div>
-          <div className="stat-card"><div className="stat-icon"><Clock3 size={18} /></div><div><span>Last scrape</span><strong>{updatedText}</strong></div></div>
-          <div className="stat-card"><div className="stat-icon"><Activity size={18} /></div><div><span>Average price</span><strong>{formatPrice(stats.average)}</strong></div></div>
-        </section>
+          {view === "search" && (
+            <SearchPanel
+              query={query}
+              onQuery={setQuery}
+              results={searchResults}
+              catalog={catalog}
+              searching={searching}
+              onTrack={trackProduct}
+              trackingId={trackingId}
+              trackedIds={trackedIds}
+              error={searchError}
+            />
+          )}
 
-        <section className="products-section">
-          <div className="section-heading"><div><h3>Tracked products</h3><p>{tracked.length ? `${tracked.length} product${tracked.length === 1 ? "" : "s"} being monitored` : "Choose a product above to start tracking"}</p></div><div className="schedule-note"><Clock3 size={15} /> Scheduled every 2 hours</div></div>
-          {loading ? <div className="product-grid">{[1,2,3].map((i) => <div className="skeleton-card" key={i}><div className="skeleton skeleton-small" /><div className="skeleton skeleton-price" /><div className="skeleton skeleton-line" /><div className="skeleton skeleton-line short" /><div className="skeleton skeleton-line" /></div>)}</div> : tracked.length ? <div className="product-grid">{tracked.map((product) => <TrackedCard key={product.productId} product={product} latest={latest[String(product.productId)]} onDetails={openDetails} onUntrack={untrackProduct} untracking={untrackingId === product.productId} />)}</div> : <div className="empty-state"><ShoppingBag size={27} /><h3>No products are being tracked</h3><p>Search the INE mock store above and click “Track product” to begin collecting price and stock history.</p></div>}
-        </section>
-      </main>
+          {view === "activity" && (
+            <section className="panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Scrape activity</h2>
+                  <p>Attempts, retries and failures across all tracked products, newest first.</p>
+                </div>
+              </div>
+              {activity.loading ? (
+                <div className="panel-empty">
+                  <Loader2 className="spin" size={18} /> Loading activity...
+                </div>
+              ) : activity.logs.length ? (
+                <>
+                  {activity.logs.length > ACTIVITY_LIMIT && (
+                    <p className="result-meta">
+                      Showing the {ACTIVITY_LIMIT} most recent of {activity.logs.length} attempts.
+                      Older attempts stay available per product under Logs.
+                    </p>
+                  )}
+                  <LogList logs={activity.logs.slice(0, ACTIVITY_LIMIT)} showProduct />
+                </>
+              ) : (
+                <div className="panel-empty">
+                  No scrape attempts recorded yet. Run a scrape from the dashboard to populate this
+                  feed.
+                </div>
+              )}
+            </section>
+          )}
+        </main>
+      </div>
 
-      <footer><span>Price Tracker</span><span>INE mock store · 2-hour scheduled scraping</span></footer>
+      {detailsProduct && (
+        <ProductDetails
+          product={detailsProduct}
+          latest={latest[String(detailsProduct.productId)] || detailsProduct}
+          history={details.history}
+          logs={details.logs}
+          loading={detailsLoading}
+          tab={detailsTab}
+          onTab={setDetailsTab}
+          onClose={() => setDetailsProduct(null)}
+          onRefresh={() => openDetails(detailsProduct, detailsTab)}
+        />
+      )}
 
-      {detailsProduct && <DetailsPanel product={detailsProduct} latest={latest[String(detailsProduct.productId)] || detailsProduct} history={details.history} logs={details.logs} loading={detailsLoading} onClose={() => setDetailsProduct(null)} onRefresh={() => openDetails(detailsProduct)} />}
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
